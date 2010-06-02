@@ -10,12 +10,16 @@
 uint32_t syncTime = 0;     // time of last sync()
 
 // the digital pins that connect to the LEDs
-#define redLEDpin 3
-#define greenLEDpin 4
+#define redLEDpin 2
+#define greenLEDpin 3
 
 // The analog pins that connect to the sensors
 #define photocellPin 0           // analog 0
 #define tempPin 1                // analog 1
+#define BANDGAPREF 14            // special indicator that we want to measure the bandgap
+
+#define aref_voltage 3.3         // we tie 3.3V to ARef and measure it with a multimeter!
+#define bandgap_voltage 1.1      // this is not super guaranteed but its not -too- off
 
 RTC_DS1307 RTC; // define the Real Time Clock object
 
@@ -74,9 +78,9 @@ void setup(void)
   }
   
 
-  file.println("millis,time,light,temp");    
+  file.println("millis,stamp,datetime,light,temp,vcc");    
 #if ECHO_TO_SERIAL
-  Serial.println("millis,time,light,temp");
+  Serial.println("millis,stamp,datetime,light,temp,vcc");
 #endif //ECHO_TO_SERIAL
 
   // attempt to write out the header to the file
@@ -87,8 +91,8 @@ void setup(void)
   pinMode(redLEDpin, OUTPUT);
   pinMode(greenLEDpin, OUTPUT);
  
-   // If you want to set the aref to something other than 5v
-  //analogReference(EXTERNAL);
+  // If you want to set the aref to something other than 5v
+  analogReference(EXTERNAL);
 }
 
 void loop(void)
@@ -115,8 +119,9 @@ void loop(void)
   // fetch the time
   now = RTC.now();
   // log time
-  file.print(now.get()); // seconds since 2000
+  file.print(now.unixtime()); // seconds since 1/1/1970
   file.print(", ");
+  file.print('"');
   file.print(now.year(), DEC);
   file.print("/");
   file.print(now.month(), DEC);
@@ -128,9 +133,11 @@ void loop(void)
   file.print(now.minute(), DEC);
   file.print(":");
   file.print(now.second(), DEC);
+  file.print('"');
 #if ECHO_TO_SERIAL
-  Serial.print(now.get()); // seconds since 2000
+  Serial.print(now.unixtime()); // seconds since 1/1/1970
   Serial.print(", ");
+  Serial.print('"');
   Serial.print(now.year(), DEC);
   Serial.print("/");
   Serial.print(now.month(), DEC);
@@ -142,28 +149,50 @@ void loop(void)
   Serial.print(now.minute(), DEC);
   Serial.print(":");
   Serial.print(now.second(), DEC);
+  Serial.print('"');
 #endif //ECHO_TO_SERIAL
 
+  analogRead(photocellPin);
+  delay(10); 
   int photocellReading = analogRead(photocellPin);  
+  
+  analogRead(tempPin); 
   delay(10);
   int tempReading = analogRead(tempPin);    
   
-  // converting that reading to voltage, for 3.3v arduino use 3.3
-  float voltage = tempReading * 5.0 / 1024;  
+  // converting that reading to voltage, for 3.3v arduino use 3.3, for 5.0, use 5.0
+  float voltage = tempReading * aref_voltage / 1024;  
   float temperatureC = (voltage - 0.5) * 100 ;
   float temperatureF = (temperatureC * 9 / 5) + 32;
   
   file.print(", ");    
   file.print(photocellReading);
   file.print(", ");    
-  file.println(temperatureF);
+  file.print(temperatureF);
 #if ECHO_TO_SERIAL
   Serial.print(", ");   
   Serial.print(photocellReading);
   Serial.print(", ");    
-  Serial.println(temperatureF);
+  Serial.print(temperatureF);
 #endif //ECHO_TO_SERIAL
 
+  // Log the estimated 'VCC' voltage by measuring the internal 1.1v ref
+  analogRead(BANDGAPREF); 
+  delay(10);
+  int refReading = analogRead(BANDGAPREF); 
+  float supplyvoltage = (bandgap_voltage * 1024) / refReading; 
+  
+  file.print(", ");
+  file.print(supplyvoltage);
+#if ECHO_TO_SERIAL
+  Serial.print(", ");   
+  Serial.print(supplyvoltage);
+#endif // ECHO_TO_SERIAL
+
+  file.println();
+#if ECHO_TO_SERIAL
+  Serial.println();
+#endif // ECHO_TO_SERIAL
 
   if (file.writeError) error("write data");
   digitalWrite(redLEDpin, LOW);
