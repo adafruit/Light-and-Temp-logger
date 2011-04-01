@@ -1,4 +1,4 @@
-#include <SdFat.h>
+#include <SD.h>
 #include <Wire.h>
 #include "RTClib.h"
 
@@ -23,16 +23,20 @@ uint32_t syncTime = 0;     // time of last sync()
 
 RTC_DS1307 RTC; // define the Real Time Clock object
 
-// The objects to talk to the SD card
-Sd2Card card;
-SdVolume volume;
-SdFile root;
-SdFile file;
+// for the data logging shield, we use digital pin 10 for the SD cs line
+const int chipSelect = 10;
+
+// the logging file
+File logfile;
 
 void error(char *str)
 {
   Serial.print("error: ");
   Serial.println(str);
+  
+  // red LED indicates error
+  digitalWrite(redLEDpin, HIGH);
+
   while(1);
 }
 
@@ -47,47 +51,54 @@ void setup(void)
 #endif //WAIT_TO_START
 
   // initialize the SD card
-  if (!card.init()) error("card.init");
+  Serial.print("Initializing SD card...");
+  // make sure that the default chip select pin is set to
+  // output, even if you don't use it:
+  pinMode(10, OUTPUT);
   
-  // initialize a FAT volume
-  if (!volume.init(card)) error("volume.init");
-  
-  // open root directory
-  if (!root.openRoot(volume)) error("openRoot");
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
+  }
+  Serial.println("card initialized.");
   
   // create a new file
-  char name[] = "LOGGER00.CSV";
+  char filename[] = "LOGGER00.CSV";
   for (uint8_t i = 0; i < 100; i++) {
-    name[6] = i/10 + '0';
-    name[7] = i%10 + '0';
-    if (file.open(root, name, O_CREAT | O_EXCL | O_WRITE)) break;
+    filename[6] = i/10 + '0';
+    filename[7] = i%10 + '0';
+    if (! SD.exists(filename)) {
+      // only open a new file if it doesn't exist
+      logfile = SD.open(filename, FILE_WRITE); 
+      break;  // leave the loop!
+    }
   }
-  if (!file.isOpen()) error ("file.create");
+  
+  if (! logfile) {
+    error("couldnt create file");
+  }
+  
   Serial.print("Logging to: ");
-  Serial.println(name);
+  Serial.println(filename);
 
-  // write header
-  file.writeError = 0;
-
+  // connect to RTC
   Wire.begin();  
   if (!RTC.begin()) {
-    file.println("RTC failed");
+    logfile.println("RTC failed");
 #if ECHO_TO_SERIAL
     Serial.println("RTC failed");
 #endif  //ECHO_TO_SERIAL
   }
   
 
-  file.println("millis,stamp,datetime,light,temp,vcc");    
+  logfile.println("millis,stamp,datetime,light,temp,vcc");    
 #if ECHO_TO_SERIAL
   Serial.println("millis,stamp,datetime,light,temp,vcc");
 #endif //ECHO_TO_SERIAL
-
-  // attempt to write out the header to the file
-  if (file.writeError || !file.sync()) {
-    error("write header");
-  }
   
+  // use debugging LEDs
   pinMode(redLEDpin, OUTPUT);
   pinMode(greenLEDpin, OUTPUT);
  
@@ -98,19 +109,16 @@ void setup(void)
 void loop(void)
 {
   DateTime now;
-  
-  // clear print error
-  file.writeError = 0;
 
   // delay for the amount of time we want between readings
   delay((LOG_INTERVAL -1) - (millis() % LOG_INTERVAL));
   
-  digitalWrite(redLEDpin, HIGH);
-
+  digitalWrite(greenLEDpin, HIGH);
+  
   // log milliseconds since starting
   uint32_t m = millis();
-  file.print(m);           // milliseconds since start
-  file.print(", ");    
+  logfile.print(m);           // milliseconds since start
+  logfile.print(", ");    
 #if ECHO_TO_SERIAL
   Serial.print(m);         // milliseconds since start
   Serial.print(", ");  
@@ -119,21 +127,21 @@ void loop(void)
   // fetch the time
   now = RTC.now();
   // log time
-  file.print(now.unixtime()); // seconds since 1/1/1970
-  file.print(", ");
-  file.print('"');
-  file.print(now.year(), DEC);
-  file.print("/");
-  file.print(now.month(), DEC);
-  file.print("/");
-  file.print(now.day(), DEC);
-  file.print(" ");
-  file.print(now.hour(), DEC);
-  file.print(":");
-  file.print(now.minute(), DEC);
-  file.print(":");
-  file.print(now.second(), DEC);
-  file.print('"');
+  logfile.print(now.unixtime()); // seconds since 1/1/1970
+  logfile.print(", ");
+  logfile.print('"');
+  logfile.print(now.year(), DEC);
+  logfile.print("/");
+  logfile.print(now.month(), DEC);
+  logfile.print("/");
+  logfile.print(now.day(), DEC);
+  logfile.print(" ");
+  logfile.print(now.hour(), DEC);
+  logfile.print(":");
+  logfile.print(now.minute(), DEC);
+  logfile.print(":");
+  logfile.print(now.second(), DEC);
+  logfile.print('"');
 #if ECHO_TO_SERIAL
   Serial.print(now.unixtime()); // seconds since 1/1/1970
   Serial.print(", ");
@@ -165,10 +173,10 @@ void loop(void)
   float temperatureC = (voltage - 0.5) * 100 ;
   float temperatureF = (temperatureC * 9 / 5) + 32;
   
-  file.print(", ");    
-  file.print(photocellReading);
-  file.print(", ");    
-  file.print(temperatureF);
+  logfile.print(", ");    
+  logfile.print(photocellReading);
+  logfile.print(", ");    
+  logfile.print(temperatureF);
 #if ECHO_TO_SERIAL
   Serial.print(", ");   
   Serial.print(photocellReading);
@@ -182,28 +190,18 @@ void loop(void)
   int refReading = analogRead(BANDGAPREF); 
   float supplyvoltage = (bandgap_voltage * 1024) / refReading; 
   
-  file.print(", ");
-  file.print(supplyvoltage);
+  logfile.print(", ");
+  logfile.print(supplyvoltage);
 #if ECHO_TO_SERIAL
   Serial.print(", ");   
   Serial.print(supplyvoltage);
 #endif // ECHO_TO_SERIAL
 
-  file.println();
+  logfile.println();
 #if ECHO_TO_SERIAL
   Serial.println();
 #endif // ECHO_TO_SERIAL
 
-  if (file.writeError) error("write data");
-  digitalWrite(redLEDpin, LOW);
-  
-  //don't sync too often - requires 2048 bytes of I/O to SD card
-  if ((millis() - syncTime) <  SYNC_INTERVAL) return;
-  syncTime = millis();
-  
-  // blink LED to show we are syncing data to the card & updating FAT!
-  digitalWrite(greenLEDpin, HIGH);
-  if (!file.sync()) error("sync");
   digitalWrite(greenLEDpin, LOW);
 }
 
