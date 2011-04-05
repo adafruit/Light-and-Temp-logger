@@ -3,11 +3,19 @@
 #include "RTClib.h"
 
 // A simple data logger for the Arduino analog pins
-#define LOG_INTERVAL  1000 // mills between entries
+
+// how many milliseconds between grabbing data and logging it. 1000 ms is once a second
+#define LOG_INTERVAL  1000 // mills between entries (reduce to take more/faster data)
+
+// how many milliseconds before writing the logged data permanently to disk
+// set it to the LOG_INTERVAL to write each time (safest)
+// set it to 10*LOG_INTERVAL to write all data every 10 datareads, you could lose up to 
+// the last 10 reads if power is lost but it uses less power and is much faster!
+#define SYNC_INTERVAL 1000 // mills between calls to flush() - to write data to the card
+uint32_t syncTime = 0; // time of last sync()
+
 #define ECHO_TO_SERIAL   1 // echo data to serial port
 #define WAIT_TO_START    0 // Wait for serial input in setup()
-#define SYNC_INTERVAL 1000 // mills between calls to sync()
-uint32_t syncTime = 0;     // time of last sync()
 
 // the digital pins that connect to the LEDs
 #define redLEDpin 2
@@ -45,6 +53,10 @@ void setup(void)
   Serial.begin(9600);
   Serial.println();
   
+  // use debugging LEDs
+  pinMode(redLEDpin, OUTPUT);
+  pinMode(greenLEDpin, OUTPUT);
+  
 #if WAIT_TO_START
   Serial.println("Type any character to start");
   while (!Serial.available());
@@ -58,9 +70,7 @@ void setup(void)
   
   // see if the card is present and can be initialized:
   if (!SD.begin(chipSelect)) {
-    Serial.println("Card failed, or not present");
-    // don't do anything more:
-    return;
+    error("Card failed, or not present");
   }
   Serial.println("card initialized.");
   
@@ -97,10 +107,6 @@ void setup(void)
 #if ECHO_TO_SERIAL
   Serial.println("millis,stamp,datetime,light,temp,vcc");
 #endif //ECHO_TO_SERIAL
-  
-  // use debugging LEDs
-  pinMode(redLEDpin, OUTPUT);
-  pinMode(greenLEDpin, OUTPUT);
  
   // If you want to set the aref to something other than 5v
   analogReference(EXTERNAL);
@@ -203,6 +209,17 @@ void loop(void)
 #endif // ECHO_TO_SERIAL
 
   digitalWrite(greenLEDpin, LOW);
+
+  // Now we write data to disk! Don't sync too often - requires 2048 bytes of I/O to SD card
+  // which uses a bunch of power and takes time
+  if ((millis() - syncTime) < SYNC_INTERVAL) return;
+  syncTime = millis();
+  
+  // blink LED to show we are syncing data to the card & updating FAT!
+  digitalWrite(redLEDpin, HIGH);
+  logfile.flush();
+  digitalWrite(redLEDpin, LOW);
+  
 }
 
 
