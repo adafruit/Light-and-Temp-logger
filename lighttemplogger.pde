@@ -175,7 +175,7 @@ void loop(void)
   int tempReading = analogRead(tempPin);    
   
   // converting that reading to voltage, for 3.3v arduino use 3.3, for 5.0, use 5.0
-  float voltage = tempReading * aref_voltage / 1024;  
+  float voltage = tempReading * aref_voltage / 1024.;  
   float temperatureC = (voltage - 0.5) * 100 ;
   float temperatureF = (temperatureC * 9 / 5) + 32;
   
@@ -194,7 +194,7 @@ void loop(void)
   analogRead(BANDGAPREF); 
   delay(10);
   int refReading = analogRead(BANDGAPREF); 
-  float supplyvoltage = (bandgap_voltage * 1024) / refReading; 
+  float supplyvoltage = (bandgap_voltage * 1024.) / refReading; 
   
   logfile.print(", ");
   logfile.print(supplyvoltage);
